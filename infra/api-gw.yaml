@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploys a base VPC with Public and Private Subnets across 3 Availability Zones,
+  an Amazon ECS cluster, with resources on underlying EC2 instances in Private Subnets.
+  Public access is only via Amazon API Gateway HTTP APIs with a private integration using a VPC link to an internal ALB and Private Subnets.
+  
+  NOTE! - this template presumes you have already created an ECR Image which is accessible from your account. This is required as an initial Parameter.
+  Also remember to tick "I acknowledge that AWS CloudFormation might create IAM resources."
+  
+  Once deployed, the API Gateway Invoke URL can be found within the Outputs tab in Cloudformation
+
+Parameters:
+  NetworkStackName:
+    Description: Stack name of the network stack
+    Type: String
+    Default: admap-qa
+  LoadBalancerStackName:
+    Description: Stack name of the Load Balancer stack
+    Type: String
+    Default: load-balancer-qa-summary
+
+Resources:
+
+  #---------------------------------------------------------------------
+  # Deploy API GW VPC Link
+  #---------------------------------------------------------------------
+  #---------------------------------------------------------------------
+
+  PrivateAPIGWvpcLink:
+    Type: AWS::ApiGatewayV2::VpcLink
+    Properties:
+      Name: private-apigw-vpclink
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub ${NetworkStackName}-alb-sg
+      SubnetIds:
+        - Fn::ImportValue: !Sub ${NetworkStackName}-private-subnet-1
+        - Fn::ImportValue: !Sub ${NetworkStackName}-private-subnet-2
+
+
+
+
+
+
+
+  # -------------------------------------------------------------------------
+  # Deploy API GW HTTP API route and integration to private ALB via VPC Link
+  # -------------------------------------------------------------------------
+
+  HttpApiALB:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: alb-HTTP-api
+      Description: HTTP API ALB
+      ProtocolType: HTTP
+
+  APIRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApiALB
+      RouteKey: 'ANY /'
+      Target: !Join
+        - /
+        - - integrations
+          - !Ref APIIntegration
+
+  APIIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApiALB
+      Description: Private ALB Integration
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      ConnectionType: VPC_LINK
+      ConnectionId:
+        !Ref PrivateAPIGWvpcLink
+      IntegrationUri:
+        Fn::ImportValue: !Sub ${LoadBalancerStackName}-listener
+      PayloadFormatVersion: '1.0'
+
+  APIStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      StageName: $default
+      AutoDeploy: true
+      ApiId: !Ref HttpApiALB
+
+Outputs:
+  APIURL:
+    Description: Invoke URL
+    Value: !Sub https://${HttpApiALB}.execute-api.${AWS::Region}.amazonaws.com/

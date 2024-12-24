@@ -1,0 +1,128 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: ECS Task Definition
+#------------------------------------------------------
+# Parameters
+#------------------------------------------------------
+Parameters:
+  EcrRepoName:
+    Type: String
+    Description: Name of the ecr repo
+    Default: summary-qa
+#------------------------------------------------------
+# Resources: task role, task execution role 
+#------------------------------------------------------
+Resources:
+  TaskRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "enable exec into task"
+          - id: W28
+            reason: "use expicit post-fix task role name"
+    Properties:
+      RoleName:
+        !Sub ${AWS::StackName}-TaskRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "ssmmessages:CreateControlChannel"
+                  - "ssmmessages:CreateDataChannel"
+                  - "ssmmessages:OpenControlChannel"
+                  - "ssmmessages:OpenDataChannel"
+                Resource: "*"
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "use expicit post-fix task role name"
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-TaskExecutionRole
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  #------------------------------------------------------
+  # Task Definition 
+  #------------------------------------------------------
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref EcrRepoName
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 1024
+      Memory: 2048
+      ContainerDefinitions:
+        - Name: !Ref EcrRepoName
+          Image: 762164109654.dkr.ecr.us-east-1.amazonaws.com/summary-repo:0d18328-2024-11-12-16-01
+          PortMappings:
+            - ContainerPort: 8534
+          Privileged: false
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /fargate/service/qa/summary
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref EcrRepoName
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: "skip using KMS"
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName:
+        !Sub
+        - "/fargate/service/qa/summary"
+        - EcrRepoName: !Ref EcrRepoName
+      RetentionInDays: 14
+
+#------------------------------------------------------
+# Outputs 
+#------------------------------------------------------
+Outputs:
+  TaskDefinition:
+    Description: Task Definition
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub "${AWS::StackName}-task-def"
+  TaskRole:
+    Description: Task Role
+    Value: !Ref TaskRole
+    Export:
+      Name: !Sub "${AWS::StackName}-task-role"
+  TaskExecutionRole:
+    Description: Task Execution Role
+    Value: !Ref TaskExecutionRole
+    Export:
+      Name: !Sub "${AWS::StackName}-task-execution-role"
